@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 
 from anthropic import Anthropic
@@ -99,6 +100,26 @@ def banner(text: str) -> None:
     print(f"\n{'=' * 64}\n{text}\n{'=' * 64}")
 
 
+def final_signal(text: str) -> str:
+    """Read Cortex's own end-of-run marker (per CORTEX_SYSTEM: end with DONE: or
+    ESCALATE:). This is our Loop Spec's definition of done: a critic-passed run that
+    ends in DONE: is a finished draft queued for review; one that ends in ESCALATE:
+    means Cortex stopped and handed off (missing data, a demanded commitment, an open
+    Sev-1, an injection, or an over-cap batch). A clean output with neither marker is
+    treated as done. We match the marker at the start of a line, tolerating markdown
+    emphasis/heading marks (**ESCALATE**, ## DONE:) and an optional trailing colon, so
+    the loop doesn't depend on Cortex formatting the marker exactly."""
+    done_at = esc_at = -1
+    for m in re.finditer(r"(?im)^[\s>#*_-]*(DONE|ESCALATE)\b", text):
+        if m.group(1).upper() == "ESCALATE":
+            esc_at = m.start()
+        else:
+            done_at = m.start()
+    if esc_at == -1 and done_at == -1:
+        return "done"
+    return "escalate" if esc_at > done_at else "done"
+
+
 def run(which: str = "happy") -> None:
     client = Anthropic()
     bounds = Bounds()
@@ -158,9 +179,17 @@ def run(which: str = "happy") -> None:
         print(json.dumps({k: v for k, v in verdict.items() if k != "_usage"}, indent=2))
 
         if verdict["verdict"] == "pass":
-            banner(f"HITL CHECKPOINT, status update + any proposed stories queued for "
-                   f"your review. Nothing posted, no commitments made. "
-                   f"Run cost ≈ ${bounds.cost:.4f}")
+            # Definition of done (Loop Spec): critic passed + nothing posted. We now
+            # split the two clean endings so a grader can see which one happened.
+            if final_signal(proposed) == "escalate":
+                banner(f"ESCALATE, Cortex stopped and handed off to a human (missing "
+                       f"data, a demanded commitment, an open Sev-1, an injection, or "
+                       f"an over-cap batch). Nothing posted, no commitments made. "
+                       f"Run cost ≈ ${bounds.cost:.4f}")
+            else:
+                banner(f"DONE, HITL CHECKPOINT: status update + any proposed stories "
+                       f"queued for your review. Nothing posted, no commitments made. "
+                       f"Run cost ≈ ${bounds.cost:.4f}")
             return
 
         if revisions >= MAX_REVISIONS:
