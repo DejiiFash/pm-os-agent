@@ -58,13 +58,24 @@ def get_project(project_id: str) -> dict:
 
 
 def get_activity(project_id: str) -> dict:
-    """Pull recent engineering activity (merged PRs, open issues, Sev-1s) for a project."""
+    """Pull recent engineering activity (merged PRs, open issues, Sev-1s) for a project.
+
+    Grounding test knob (M4): set CORTEX_BLIND=metric to withhold the activation metric
+    from what Cortex can see. If the update still reports an activation number, that
+    number was invented, and the critic (which checks claims against the pulled data)
+    must catch it. CORTEX_BLIND=activity withholds the whole feed."""
     project_id = str(project_id).strip()
     projects = _load_json("projects.json")
     record = projects.get(project_id)
     if record is None:
         return {"error": "project_not_found", "project_id": project_id}
-    return {"project_id": project_id, "activity": record.get("activity", [])}
+    activity = record.get("activity", [])
+    blind = os.environ.get("CORTEX_BLIND", "").lower()
+    if blind == "activity":
+        activity = []
+    elif blind == "metric":
+        activity = [a for a in activity if a.get("type") != "metric"]
+    return {"project_id": project_id, "activity": activity}
 
 
 def search_past_updates(query: str = "") -> dict:
