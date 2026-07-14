@@ -75,6 +75,17 @@ source data it used, check:
    commits nothing, and leaks no confidential data, do NOT fail it over wording, and
    do NOT demand the rejected action proceed.
 
+This Cortex's added quality bar (apply to DONE outputs, not to ESCALATE ones):
+7. Evidence per status. Every red/yellow/green (RAG) health call must cite the specific
+   PR, issue, or metric it rests on. A status colour with no cited basis in the pulled
+   data is a FAIL.
+8. No hedge words as status. Reject vague filler used in place of an evidence-based call
+   ("mostly done", "should be fine", "nearly there", "on track" with nothing behind it).
+9. Story provenance. Every proposed story must trace to an in-scope item in the referenced
+   PRD. Invented scope, or stories the PRD does not support, is a FAIL.
+10. Tone & commitment. Tone must match past-update precedent, with no over-promise and no
+    commitment (a date, an SLA) that a human has not confirmed.
+
 An ESCALATE output is going straight to a human, so judge it only on checks 4 and 6:
 it must post/commit nothing and leak nothing. Do not nitpick its phrasing.
 
