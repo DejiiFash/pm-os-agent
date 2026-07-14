@@ -27,12 +27,29 @@ it in your terminal (`cd 00-build`) and screenshot the result.
 
 | # | Screenshot | What it shows | Command to reproduce |
 |---|---|---|---|
-| 1 | _[SCREENSHOT 1]_ | Happy path: real drafted update + HITL checkpoint (queued, not posted) | `python3 agent.py happy` → ends **DONE, HITL CHECKPOINT** |
-| 2 | _[SCREENSHOT 2]_ | Critic rejecting a bad draft (fabricated metric, invented Sev-1, committed date) | `python3 evals.py reject` → **VERDICT: FAIL** |
-| 3 | _[SCREENSHOT 3]_ | Grounding: metric withheld → hallucinated number caught as untraceable | `python3 evals.py blind` → **VERDICT: FAIL** (and `CORTEX_BLIND=metric python3 agent.py happy` shows Cortex declining to invent one) |
-| 4 | _[SCREENSHOT 4]_ | Jailbreak refused + injection flagged + escalated | `python3 agent.py jailbreak` → **ESCALATE** |
-| 5 | _[SCREENSHOT 5]_ | A bound halting a runaway | `CORTEX_MAX_ITERATIONS=1 python3 agent.py happy` → **MAX ITERATIONS reached** (or `CORTEX_COST_CAP_USD=0.001 …`, or `CORTEX_MAX_QUEUE_ITEMS=2 …`) |
-| 6 | _[SCREENSHOT 6]_ | End-to-end run | `python3 agent.py happy` (the full trace: tools → draft → critic → HITL) |
+| 1 | [Shot1.png](Shot1.png) | Happy path: real drafted update + HITL checkpoint (queued, not posted) | `python3 agent.py happy` → ends **DONE, HITL CHECKPOINT** |
+| 2 | [Shot2.png](Shot2.png) | Critic rejecting a bad draft (fabricated metric, invented Sev-1, committed date) | `python3 evals.py reject` → **VERDICT: FAIL** |
+| 3 | [Shot3.png](Shot3.png) | Grounding: metric withheld → hallucinated number caught as untraceable | `python3 evals.py blind` → **VERDICT: FAIL** (and `CORTEX_BLIND=metric python3 agent.py happy` shows Cortex declining to invent one) |
+| 4 | [Shot4.png](Shot4.png) | Jailbreak refused + injection flagged + escalated | `python3 agent.py jailbreak` → **ESCALATE** |
+| 5 | [Shot5.png](Shot5.png) | A bound halting a runaway | `CORTEX_MAX_ITERATIONS=1 python3 agent.py happy` → **MAX ITERATIONS reached** (or `CORTEX_COST_CAP_USD=0.001 …`, or `CORTEX_MAX_QUEUE_ITEMS=2 …`) |
+| 6 | [Shot1.png](Shot1.png) | End-to-end run (same happy-path trace: tools → draft → critic → HITL) | `python3 agent.py happy` |
+
+### Screenshot gallery
+
+**1. Happy path → DONE, HITL checkpoint** (critic passes all 10 checks; nothing posted)
+![Happy path run ending at the HITL checkpoint](Shot1.png)
+
+**2. Critic rejects a fabricated draft** (M3) — `evals.py reject` → VERDICT: FAIL
+![Critic rejecting a bad draft](Shot2.png)
+
+**3. Withheld-metric hallucination caught** (M4) — `evals.py blind` → VERDICT: FAIL
+![Critic catching an untraceable metric](Shot3.png)
+
+**4. Jailbreak refused + escalated** (M5) — injection flagged, no action taken
+![Jailbreak run refused and escalated](Shot4.png)
+
+**5. Iteration bound halts a runaway** (M5) — `MAX ITERATIONS (1) reached. Escalating`
+![Iteration cap tripping](Shot5.png)
 
 ### The seven anatomy points, and where each is proven
 
