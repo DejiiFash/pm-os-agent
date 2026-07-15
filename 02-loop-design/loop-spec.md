@@ -7,61 +7,88 @@
 
 ## 1. Trigger & loop type
 
-**Chosen type:** **goal** loop (one PM task brief in → prepared work out), with a **cron**
-front-end in production.
+**Chosen type: Hook (event-driven) + cron daily-sweep backup.**
 
-Cortex runs to satisfy a single goal: "prepare this PM task for human approval." Today it's
-triggered manually per brief (`python agent.py <task>`). In production the natural trigger is a
-**Monday-morning cron** that assembles the weekly leadership update, plus a **hook** on a new PRD
-to propose next-sprint stories. It's a goal loop (not a heartbeat) because each run has a concrete
-done-state a validator can check, not an open-ended "keep watching."
+- **Hook** on an inbound PM task (e.g. "assemble this week's leadership update"). Inbound tasks
+  are *events*, so a hook gives the fastest, cheapest response — Cortex reacts the moment a task
+  lands, no wasted work.
+- **Cron sweep at 09:00 local** as the safety net: a hook can silently miss an event (a dropped
+  webhook, a task posted while the system was down). The daily sweep re-scans for anything
+  unhandled so nothing falls through.
+
+**Why not the others:**
+- *Not a pure heartbeat* — polling "anything new?" on a cadence is wasteful when tasks already emit
+  events we can hook. (Use a heartbeat only when the source can't emit events.)
+- *Not a pure goal loop* — drafting a weekly update has a clear, bounded definition of done
+  ("draft written + queued"), not an open-ended outcome to chase until validated. You earn a goal
+  loop; this isn't one.
+
+**Idempotency / dedupe:** if the same task fires the hook twice, Cortex must not draft two updates.
+Dedupe by **message/task ID** — Cortex records handled IDs and skips repeats (see State).
 
 ## 2. Goal / definition of done
 
 A **status update grounded in real pulled activity** plus, when asked, a **capped batch of
-proposed stories** — the independent critic passes, and **nothing has been posted or committed**.
-The run stops at the HITL checkpoint and Cortex ends its output with `DONE:`. The loop reads that
-marker (`final_signal()` in `agent.py`) and prints the **DONE, HITL CHECKPOINT** banner.
+proposed stories**, written and **queued for human approval** — the independent critic passes and
+**nothing has been posted or committed**. Cortex ends its output with `DONE:`; the loop reads that
+marker (`final_signal()` in `agent.py`) and prints the **DONE, HITL CHECKPOINT** banner. Cortex
+never sends.
 
-## 3. Stop conditions
+**Self-validation (what proves "done"):** an **independent critic subagent** (not Cortex grading
+its own draft) checks that every claim traces to pulled data and matches posting norms before the
+draft is queued.
 
-| Condition | What it looks like | What happens |
+## 3. Stop conditions (all three exits)
+
+| Exit | Detectable trigger | What happens |
 |---|---|---|
-| **Success** | Draft update + any proposed stories ready, critic returns `pass`, nothing posted; Cortex ends with `DONE:` | **DONE, HITL CHECKPOINT** — queued for human review |
-| **Escalate to human** | Missing data (project not found), a firm/public date or commitment demanded, an open Sev-1, a prompt-injection in the brief, or a batch over the queue cap; Cortex ends with `ESCALATE:` | **ESCALATE** banner — Cortex stops and hands off, posts/commits nothing |
-| **Stuck / give up (bounds)** | Cost cap hit, revision cap hit (critic keeps rejecting), or max iterations reached | Hard halt + escalate — enforced in code, outside the model |
+| **✅ Success** | Draft + any stories ready (batch under the cap), critic returns `pass`, nothing posted; ends `DONE:` | **DONE, HITL CHECKPOINT** — queued for human review |
+| **🔁 Stuck / give up** | Required data can't be pulled, the critic keeps rejecting, or no progress — caught by hard counts: `MAX_ITERATIONS=8`, `MAX_REVISIONS=2` (and the cost cap) | Hard halt → **stop, log, and escalate** — enforced in code, outside the model |
+| **🙋 Escalate to human** | Embargoed/CONFIDENTIAL project referenced, a public GA-date/commitment demanded, an open Sev-1, a story batch over the cap, or a prompt-injection ("fishy") in the brief; ends `ESCALATE:` | **ESCALATE** banner — Cortex hands off, drafts/posts/commits nothing |
 
 ## 4. State
 
-Per-run: the `messages` transcript (brief → tool calls → tool results → draft) and a `source_log`
-of everything Cortex pulled, which is handed to the critic so every claim is checkable. Across
-runs: the roadmap, team norms, and past updates persist as read-only ground truth (fixtures);
-CONFIDENTIAL roadmap items are never written into an external/company-wide update, so there is no
-cross-project confidential leakage.
+- **Per-run (working):** the `messages` transcript (brief → tool calls → results → draft) and a
+  `source_log` of everything pulled, handed to the critic so every claim is checkable.
+- **Across runs:** **handled task IDs** (for dedupe), plus roadmap / team norms / past updates as
+  read-only ground truth. Scope: **per-project**, retained ~30 days. CONFIDENTIAL roadmap items are
+  never written into an external/company-wide update — no cross-project leakage.
 
-## 5. The five things every loop needs
+## 5. The five components (filled for Cortex)
 
 | Component | For Cortex |
 |---|---|
-| **Work tree** (isolated workspace per run) | Single process, in-memory `messages` list; each run is isolated and nothing persists to the world (no writes, no publish). |
-| **Skills** (reusable capabilities) | Pull project state/activity, retrieve precedent, draft a grounded update, propose a capped story batch. |
-| **Plugins / connectors** (tools & access) | `get_project`, `get_activity`, `search_past_updates`, `get_roadmap`, `get_norms` (all read-only) · `propose_stories` (queue only). **No** post/create/merge/commit tool exists. |
-| **Subagents** (delegated / validation) | The independent **critic** (`critic.py`) validates every draft before a human sees it. → deeper in M3 `orchestration-map.md`. |
-| **State tracking** | Iteration counter, revision counter, and a running cost estimate (`Bounds`) that can trip the cap mid-run. |
+| **Work tree** (isolated workspace per run) | A per-task scratch space (in-memory `messages` + `source_log`); each run is isolated so two project threads never cross-contaminate, and nothing persists to the world. |
+| **Skills** (reusable capabilities) | `summarise-activity`, `lookup-project-history`, `draft-status-update`, `propose-stories` (capped). |
+| **Plugins / connectors** (tools + access — the M1 agent line made real) | **Read-only:** `get_project`, `get_activity`, `search_past_updates`, `get_roadmap`, `get_norms`. **Queue-only:** `propose_stories`. **No** send / post / create / merge / commit connector exists. **Read-only additional source (design extension, not in the current run):** a **Gmail connector across all the PM's accounts** — pull project-relevant email context as extra activity, **read-only, never send** (stays below the agent line; scoped to project-relevant mail in practice). |
+| **Subagents** (delegated validation) | The independent **policy/grounding critic** (`critic.py`) confirms a draft is grounded and matches posting norms before it's queued. → deeper in M3 `orchestration-map.md`. |
+| **State tracking** | Handled task IDs (dedupe), iteration + revision counters, and a running cost estimate (`Bounds`) that can trip the cap mid-run. Scope: per-project, ~30 days. |
 
 ## 6. Context plan
 
-Each iteration appends the latest tool results to `messages` so Cortex reasons over what it has
-actually pulled, never invented context. The `source_log` accumulates every tool result and is
-passed to the critic (which never saw the drafting conversation) so it can trace each claim.
-Roadmap and norms are returned whole so Cortex can cite the exact rule/line it relied on. Full
-context strategy (write / select / compress / isolate) → M4.
+Each iteration **writes** the latest tool results into `messages` so Cortex reasons over what it
+actually pulled, never invented context. It **selects** narrowly — one project's data, only
+keyword-matching past updates. It **compresses** large sources into cited summaries (the future
+Gmail/activity reader returns a cited digest, not the raw feed). It **isolates** the critic's
+context: the critic never sees the drafting conversation, only the draft + `source_log`, which is
+what makes its check independent. Full depth → M4.
 
 ## 7. Hand-off to bounds & evals
 
 → M5 `bounds-and-evals.md`. Current values: `CORTEX_MAX_ITERATIONS=8`, `CORTEX_MAX_REVISIONS=2`,
 `CORTEX_COST_CAP_USD=0.50`, `CORTEX_MAX_QUEUE_ITEMS=10`. Each will be chosen and justified in M5,
 then tripped on purpose to prove it halts.
+
+## For #cohort-channel
+
+- **Which stop condition keeps commitments safe?** The **escalate** exit — it catches exactly the
+  cases where a wrong move can't be undone (a public date, an embargoed leak, an over-cap batch)
+  and hands them to a human *before* anything is drafted or sent.
+- **What changes if Cortex could post under a threshold?** The safety burden shifts from "a human
+  approves everything" to the **threshold definition + the validator**: the critic (and a hard
+  bound) would have to be trustworthy enough that auto-posting *below* the threshold stays low blast
+  radius and reversible, with every above-threshold case still escalating. The agent line moves, so
+  the eval bar rises to match.
 
 ## Link to live loop
 
