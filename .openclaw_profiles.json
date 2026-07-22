@@ -1,0 +1,7 @@
+{
+  "fash": {
+    "provider": "anthropic",
+    "profile_id": "anthropic:deji-claude-secondary",
+    "api_key": "test-api-key-456"
+  }
+}
